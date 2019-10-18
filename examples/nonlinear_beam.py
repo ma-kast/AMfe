@@ -109,7 +109,7 @@ def write_callback(t, x, dx, ddx):
 
 
 t0 = 0.0
-t_end = 0.15
+t_end = 0.00015
 
 no_of_dofs = system.dimension
 q0 = np.zeros(no_of_dofs)
