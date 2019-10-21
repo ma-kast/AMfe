@@ -143,6 +143,7 @@ class JenkinsContact(HysteresisContact):
         K = np.zeros((3, 3))
         f = np.zeros((3, 1))
 
+        # Always update the relative displacement
         self._u_rel_t = u_rel[:2]
 
         # Check if we are actually in contact by looking at the normal dof.
@@ -152,11 +153,11 @@ class JenkinsContact(HysteresisContact):
             K[2, 2] = self.k_n
 
             # Compute trial stress
-            trial_stress = self._f_t_previous + self.k_t * (self._u_rel_t_previous - self._u_rel_t)
+            trial_stress = self._f_t_previous + self.k_t * (self._u_rel_t - self._u_rel_t_previous)
 
             # Check if we are in the sticking or slipping regime
 
-            f_limit = f[2] * self.mu  # Coulomb friction limit
+            f_limit = np.abs(f[2] * self.mu)  # Coulomb friction limit
             f_trial = np.linalg.norm(trial_stress, ord=2)
 
             if f_trial <= f_limit:
@@ -172,14 +173,18 @@ class JenkinsContact(HysteresisContact):
                 if f_trial > 0:
                     self._f_t = trial_stress / f_trial * f_limit
                     # Derivative with respect to normal displacement
-                    K[:2, 2] = trial_stress / f_trial * self.k_n * self.mu
+                    K[:2, 2:] = trial_stress / f_trial * self.k_n * self.mu
                     # Derivative with respect to tangential displacements
                     K[:2, :2] = self.k_t * f_limit / f_trial ** 3 * \
                                 np.array([[trial_stress[1] ** 2, trial_stress[0] * trial_stress[1]],
-                                          [trial_stress[0] * trial_stress[1], trial_stress[0] ** 2]])
-
+                                          [trial_stress[0] * trial_stress[1], trial_stress[0] ** 2]]).reshape(2,2)
+                    f[:2] = self._f_t
                 else:
                     self._f_t = np.zeros((2, 1))  # We should never reach this statement
                     print("Warning, this statement should not be reachable. Slipping regime with 0 trial stress?!")
+
+        else:
+            # We are not in contact. Update tangential stresses to be 0.
+            self._f_t = f[:2]
 
         return K, f

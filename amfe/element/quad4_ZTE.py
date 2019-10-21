@@ -27,7 +27,7 @@ except Exception:
     print('Python was not able to load the fast fortran element routines.')
 
 
-class Quad4_ZTE(Element):
+class Quad4ZTE(Element):
     """
     Zero thickness element with two facing quads.
 
@@ -50,18 +50,18 @@ class Quad4_ZTE(Element):
     """
     name = 'Quad4_ZTE'
 
-    def __init__(self, contact_model, *args, **kwargs, ):
+    def __init__(self, contact_models, *args, **kwargs, ):
         """
                 Parameters
                 ----------
-                contact_model: amfe.Hysteresis_contact - object
-                    Object handling the contact
+                contact_models: amfe.Hysteresis_contact - object
+                    Objects handling the contact, has to be equal to the number of Gauss Points
                 """
         super().__init__(*args, **kwargs)
 
-        self.contact_model = contact_model
-        self.K = np.zeros((24,24))
-        self.f = np.zeros(24)
+        self.contact_models = contact_models
+        self.K = np.zeros((24, 24))
+        self.f = np.zeros((24, 1))
 
         # Gauss-Point-Handling:
         g1 = np.sqrt(1/3)
@@ -80,7 +80,7 @@ class Quad4_ZTE(Element):
 
     @staticmethod
     def fields():
-        return ('ux', 'uy', 'uz')
+        return 'ux', 'uy', 'uz'
 
     def dofs(self):
         return (('N', 0, 'ux'),
@@ -94,7 +94,7 @@ class Quad4_ZTE(Element):
                 ('N', 2, 'uz'),
                 ('N', 3, 'ux'),
                 ('N', 3, 'uy'),
-                ('N', 3, 'uz'), # end of top Quad
+                ('N', 3, 'uz'),  # end of top Quad
                 ('N', 4, 'ux'),
                 ('N', 4, 'uy'),
                 ('N', 4, 'uz'),
@@ -106,7 +106,7 @@ class Quad4_ZTE(Element):
                 ('N', 6, 'uz'),
                 ('N', 7, 'ux'),
                 ('N', 7, 'uy'),
-                ('N', 7, 'uz')) # end of bottom Quad
+                ('N', 7, 'uz'))  # end of bottom Quad
 
     def _compute_tensors(self, X, u, t):
         X_mat = X.reshape(8, 3)
@@ -133,29 +133,35 @@ class Quad4_ZTE(Element):
                                 [ eta/4 + 1/4,  xi/4 + 1/4],
                                 [-eta/4 - 1/4, -xi/4 + 1/4]])
 
-            K_contact, f_contact = self.c
-            dX_dxi = X_mat.T @ dN_dxi
+            dx_dxi = X_mat[0:4,:].T @ dN_dxi
+            # Compute the normal vector
+            n = np.cross(dx_dxi[:, 1], dx_dxi[:, 0])
+
+            # Vectors of local coordinates in global coordinates, should be A
+            dX_dxi = np.zeros((3,3))
+            dX_dxi[:,1] = dx_dxi[:, 1]
+            dX_dxi[:, 2] = dx_dxi[:, 2]
+            dX_dxi[:, 3] = n
+
+            # Should be inverse of A
             dxi_dX = np.linalg.inv(dX_dxi)
             det = np.linalg.det(dX_dxi)
-            B0_tilde = dN_dxi @ dxi_dX
-            H = u_mat.T @ B0_tilde
-            F = H + np.eye(3)
-            E = 1/2*(H + H.T + H.T @ H)
-            S, S_v, C_SE = self.material.S_Sv_and_C(E)
-            B0 = compute_B_matrix(B0_tilde, F)
-            K_geo_small = B0_tilde @ S @ B0_tilde.T * det
-            K_geo = scatter_matrix(K_geo_small, 3)
-            K_mat = B0.T @ C_SE @ B0 * det
 
-            self.K += (K_geo + K_mat) * w
-            self.f += B0.T @ S_v * det * w
+            # Should be dN_dX
+            B0_tilde = dN_dxi @ dxi_dX
+            # u_rel in local coordinates??
+            u_rel_local = dxi_dX @ u_rel.T
+            contact_model = self.contact_models[n]
+            # This is the contact force and Jacobian in relative coordinates
+            K_contact, f_contact = contact_model(u_rel_local) #I hope that this actually saves the state
+
+            # Missing: Map it back
+
+            self.K += K_contact * w
+            self.f += f_contact * w
 
             # extrapolation of gauss element
-            extrapol = self.extrapolation_points[:,n_gauss:n_gauss+1]
-            self.S += extrapol @ np.array([[S[0,0], S[0,1], S[0,2],
-                                            S[1,1], S[1,2], S[2,2]]])
-            self.E += extrapol @ np.array([[E[0,0], E[0,1], E[0,2],
-                                            E[1,1], E[1,2], E[2,2]]])
+
         return
 
 
