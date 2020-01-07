@@ -10,7 +10,7 @@
 """
 
 __all__ = [
-    'Quad4_ZTE'
+    'Quad4ZTE'
 ]
 
 import numpy as np
@@ -112,58 +112,78 @@ class Quad4ZTE(Element):
         X_mat = X.reshape(8, 3)
         u_mat = u.reshape(8, 3)
 
-        u_rel = u[0:4,:] - u[4:8,:]
-
+        # Here, we implicitly assume the ordering of the second Quad. It might be, that it actually is ordered counter-
+        # clockwise. This is something, that might need to be fixed in a code. I.e. we need to take care of numbering.
+        u_rel = u_mat[0:4, :] - u_mat[4:8, :]
+        X_top = X_mat[0:4, :]
         self.K *= 0
         self.f *= 0
-        self.S *= 0
-        self.E *= 0
 
         for n_gauss, (xi, eta, w) in enumerate(self.gauss_points):
 
+            N = np.array([[(-eta + 1) * (-xi + 1)/4],
+                          [(-eta + 1) * (xi + 1)/4],
+                          [(eta + 1) * (xi + 1)/4],
+                          [(eta + 1) * (-xi + 1)/4]])
 
-            N = np.array([  [(-eta + 1)*(-xi + 1)/4],
-                            [ (-eta + 1)*(xi + 1)/4],
-                            [  (eta + 1)*(xi + 1)/4],
-                            [ (eta + 1)*(-xi + 1)/4]])
+            dN_dxi = np.array([[eta/4 - 1/4,  xi/4 - 1/4],
+                               [-eta/4 + 1/4, -xi/4 - 1/4],
+                               [eta/4 + 1/4,  xi/4 + 1/4],
+                               [-eta/4 - 1/4, -xi/4 + 1/4]])
 
+            k_gp, f_gp = self._compute_gausspoint_contribution(N, dN_dxi, X_top, u_rel, n_gauss)
+            # Scatter onto all nodal dofs
+            f_mat_gp = np.outer(N, f_gp)
+            k_mat_gp = self._assemble_big_k(k_gp, N)
 
-            dN_dxi = np.array([ [ eta/4 - 1/4,  xi/4 - 1/4],
-                                [-eta/4 + 1/4, -xi/4 - 1/4],
-                                [ eta/4 + 1/4,  xi/4 + 1/4],
-                                [-eta/4 - 1/4, -xi/4 + 1/4]])
+            # Accumulate gauss point contribution for integration
+            self.K[:12, :12] += k_mat_gp * w
+            self.f[:12, :] += f_mat_gp.reshape(12, 1) * w
 
-            dx_dxi = X_mat[0:4,:].T @ dN_dxi
-            # Compute the normal vector
-            n = np.cross(dx_dxi[:, 1], dx_dxi[:, 0])
-
-            # Vectors of local coordinates in global coordinates, should be A
-            dX_dxi = np.zeros((3,3))
-            dX_dxi[:,1] = dx_dxi[:, 1]
-            dX_dxi[:, 2] = dx_dxi[:, 2]
-            dX_dxi[:, 3] = n
-
-            # Should be inverse of A
-            dxi_dX = np.linalg.inv(dX_dxi)
-            det = np.linalg.det(dX_dxi)
-
-            # Should be dN_dX
-            B0_tilde = dN_dxi @ dxi_dX
-            # u_rel in local coordinates??
-            u_rel_local = dxi_dX @ u_rel.T
-            contact_model = self.contact_models[n]
-            # This is the contact force and Jacobian in relative coordinates
-            K_contact, f_contact = contact_model(u_rel_local) #I hope that this actually saves the state
-
-            # Missing: Map it back
-
-            self.K += K_contact * w
-            self.f += f_contact * w
-
-            # extrapolation of gauss element
+        # Scatter contributions to bottom element and interactions
+        self.K[12:, 12:] = self.K[:12, :12]
+        self.K[:12, 12:] = -self.K[:12, :12]
+        self.K[12:, :12] = -self.K[:12, :12]
+        self.f[12:, :] = -self.f[:12]
 
         return
 
+    def _compute_gausspoint_contribution(self, N, dN_dxi, X_upper, u_rel, n_gauss):
+        dx_dxi = X_upper.T @ dN_dxi
+        # Compute the normal vector
+        normal_vector = np.cross(dx_dxi[:, 1], dx_dxi[:, 0])
+        normal_vector = normal_vector / np.linalg.norm(normal_vector, ord=2)
 
+        # Vectors of local coordinates in global coordinates, such that g_local = dX_dxi g_global
+        dX_dxi = np.zeros((3, 3))
+        dX_dxi[:, 0] = dx_dxi[:, 0]
+        dX_dxi[:, 1] = dx_dxi[:, 1]
+        dX_dxi[:, 2] = -normal_vector
 
+        # Find necessary inverse transform
+        dxi_dX = np.linalg.inv(dX_dxi)
+        det = np.linalg.det(dX_dxi)
 
+        Minv = dxi_dX @ dxi_dX.T
+        # Compute the relative displacement in local coordinates
+        u_rel_local = dX_dxi.T @ u_rel.T @ N
+
+        # Compute local contact state
+        contact_model = self.contact_models[n_gauss]
+
+        # We need to pass the metric Minv to correctly compute the norm of the trial stress
+        K_contact_local, f_contact_local = contact_model.K_and_f(u_rel_local, Minv[:2, :2])
+
+        # Transfer back to the original orientation. Inverse coordinate transformation and chain rule on u_local
+        f_original = dxi_dX.T  @ f_contact_local * det
+        K_original = dxi_dX.T  @ K_contact_local  @ dX_dxi.T * det
+        return K_original, f_original
+
+    def _assemble_big_k(self, k_mat, N):
+        weights = np.outer(N, N)
+        big_k = np.zeros((12, 12))
+        for index_x in range(4):
+            for index_y in range(4):
+                big_k[index_x * 3:index_x * 3 + 3, index_y * 3:index_y * 3 + 3] = k_mat * weights[index_x, index_y]
+
+        return big_k

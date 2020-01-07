@@ -55,6 +55,8 @@ solution = AmfeSolution()
 
 def write_callback(t, x, dx, ddx):
     u, du, ddu = formulation.recover(x, dx, ddx, t)
+    print(u)
+
     solution.write_timestep(t, u, du, ddu)
 
 

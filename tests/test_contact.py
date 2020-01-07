@@ -259,7 +259,7 @@ class PropagationOfStates(unittest.TestCase):
 
     def test_states_propagate_in_tuple(self):
         # This tests more python behavior than the actual implementation. But it gives us
-        # confidence that things work as expected
+        # confidence that things work as expected.
         contact_1 = JenkinsContact(k_n=self.k_n, k_t=self.k_t, mu=self.mu, u_rel_t=None, f_t=None)
         contact_2 = JenkinsContact(k_n=self.k_n, k_t=self.k_t, mu=self.mu, u_rel_t=None, f_t=None)
         contacts = (contact_1, contact_2)

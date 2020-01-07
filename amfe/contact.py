@@ -53,7 +53,7 @@ class HysteresisContact(Contact):
     def __init__(self):
         super().__init__()
 
-    def K_and_f(self, u_rel):
+    def K_and_f(self, u_rel, Minv):
         """
         Compute Jacobian contribution/stiffness and nonlinear forces due to the contact state
 
@@ -138,7 +138,9 @@ class JenkinsContact(HysteresisContact):
         self._u_rel_t_previous = self._u_rel_t
         self._f_t_previous = self._f_t
 
-    def K_and_f(self, u_rel):
+    def K_and_f(self, u_rel, Minv = None):
+        if Minv is None:
+            Minv = np.eye(2)
 
         K = np.zeros((3, 3))
         f = np.zeros((3, 1))
@@ -158,9 +160,9 @@ class JenkinsContact(HysteresisContact):
             # Check if we are in the sticking or slipping regime
 
             f_limit = np.abs(f[2] * self.mu)  # Coulomb friction limit
-            f_trial = np.linalg.norm(trial_stress, ord=2)
-
-            if f_trial <= f_limit:
+            f_trial_corr = np.sqrt(trial_stress.T  @Minv @ trial_stress)  # norm of trial stress in correct metric?
+            f_trial = f_trial_corr #np.linalg.norm(trial_stress, ord =2)
+            if f_trial_corr <= f_limit:
                 # Sticking regime
                 self._f_t = trial_stress
                 f[:2] = self._f_t
@@ -175,9 +177,9 @@ class JenkinsContact(HysteresisContact):
                     # Derivative with respect to normal displacement
                     K[:2, 2:] = trial_stress / f_trial * self.k_n * self.mu
                     # Derivative with respect to tangential displacements
-                    K[:2, :2] = self.k_t * f_limit / f_trial ** 3 * \
-                                np.array([[trial_stress[1] ** 2, trial_stress[0] * trial_stress[1]],
-                                          [trial_stress[0] * trial_stress[1], trial_stress[0] ** 2]]).reshape(2,2)
+                    diag_part = np.eye(2) / f_trial
+                    skewed_part = np.outer(trial_stress, trial_stress) @ Minv /f_trial**3
+                    K[:2, :2] = self.k_t * f_limit *  (diag_part -skewed_part)
                     f[:2] = self._f_t
                 else:
                     self._f_t = np.zeros((2, 1))  # We should never reach this statement
